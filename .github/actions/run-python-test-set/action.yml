@@ -180,8 +180,9 @@ runs:
           scripts/generate_and_push_perf_report.sh
         fi
 
-    - name: Upload compatibility snapshot for Postgres 14
-      if: github.ref_name == 'release'
+    - name: Upload compatibility snapshot for Postgres 15
+      # if: github.ref_name == 'release'
+      if: always()
       uses: ./.github/actions/upload
       with:
         name: compatibility-snapshot-${{ inputs.build_type }}-pg15-${{ github.run_id }}

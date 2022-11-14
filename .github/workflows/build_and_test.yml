@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - release
+      - bayandin/compatibility-snapshot-for-pg15
   pull_request:
 
 concurrency:
@@ -933,7 +934,8 @@ jobs:
       image: 369495373322.dkr.ecr.eu-central-1.amazonaws.com/rust:pinned
       options: --init
     needs: [ deploy, deploy-proxy ]
-    if: github.ref_name == 'release' && github.event_name != 'workflow_dispatch'
+    # if: github.ref_name == 'release' && github.event_name != 'workflow_dispatch'
+    if: always()
     steps:
       - name: Promote compatibility snapshot for the release
         shell: bash -euxo pipefail {0}
@@ -949,16 +951,16 @@ jobs:
             time aws s3 mv --only-show-errors s3://${BUCKET}/${PREFIX}/${OLD_FILENAME} s3://${BUCKET}/${PREFIX}/${NEW_FILENAME}
           done
 
-          # Update Neon artifact for the release (reuse already uploaded artifact)
-          for build_type in debug release; do
-            OLD_PREFIX=artifacts/${GITHUB_RUN_ID}
-            FILENAME=neon-${{ runner.os }}-${build_type}-artifact.tar.zst
+          # # Update Neon artifact for the release (reuse already uploaded artifact)
+          # for build_type in debug release; do
+          #   OLD_PREFIX=artifacts/${GITHUB_RUN_ID}
+          #   FILENAME=neon-${{ runner.os }}-${build_type}-artifact.tar.zst
 
-            S3_KEY=$(aws s3api list-objects-v2 --bucket ${BUCKET} --prefix ${OLD_PREFIX} | jq -r '.Contents[].Key' | grep ${FILENAME} | sort --version-sort | tail -1 || true)
-            if [ -z "${S3_KEY}" ]; then
-              echo 2>&1 "Neither s3://${BUCKET}/${OLD_PREFIX}/${FILENAME} nor its version from previous attempts exist"
-              exit 1
-            fi
+          #   S3_KEY=$(aws s3api list-objects-v2 --bucket ${BUCKET} --prefix ${OLD_PREFIX} | jq -r '.Contents[].Key' | grep ${FILENAME} | sort --version-sort | tail -1 || true)
+          #   if [ -z "${S3_KEY}" ]; then
+          #     echo 2>&1 "Neither s3://${BUCKET}/${OLD_PREFIX}/${FILENAME} nor its version from previous attempts exist"
+          #     exit 1
+          #   fi
 
-            time aws s3 cp --only-show-errors s3://${BUCKET}/${S3_KEY} s3://${BUCKET}/${PREFIX}/${FILENAME}
-          done
+          #   time aws s3 cp --only-show-errors s3://${BUCKET}/${S3_KEY} s3://${BUCKET}/${PREFIX}/${FILENAME}
+          # done
