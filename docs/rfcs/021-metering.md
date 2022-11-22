@@ -2,7 +2,7 @@
 
 # Goals
 
-This proposal is made with two mostly but entirely overlapping goals:
+This proposal is made with two mostly but not entirely overlapping goals:
 
 * Collect info that is needed for consumption-based billing
 * Cross-check AWS bills
@@ -12,20 +12,23 @@ This proposal is made with two mostly but entirely overlapping goals:
 
 There are six metrics to collect:
 
-* CPU time. Wall clock seconds times the current number of cores. We have a fixed ratio of memory to cores, so the current memory size is the function of the number of cores. Measured per each `endpoint`.
+* CPU time. Wall clock seconds * the current number of cores. We have a fixed ratio of memory to cores, so the current memory size is the function of the number of cores. Measured per each `endpoint`.
 
 * Traffic. In/out traffic on the proxy. Measured per each `endpoint`.
 
 * Written size. Amount of data we write. That is different from both traffic and storage size, as only during the writing we
-a) occupy some disk bandwidth on safekeepers
-b) necessarily cross AZ boundaries delivering WAL to all safekeepers
-Each timeline/branch has at most one writer, so the data is collected per branch.
+
+  a) occupy some disk bandwidth on safekeepers
+  
+  b) necessarily cross AZ boundaries delivering WAL to all safekeepers
+
+  Each timeline/branch has at most one writer, so the data is collected per branch.
 
 * Synthetic storage size. That is what is exposed now with pageserver's `/v1/tenant/{}/size`. Looks like now it is per-tenant. (Side note: can we make it per branch to show as branch physical size in UI?)
 
-* Real storage size. That is the size of the tenant on the pageservers disk. Per-tenant.
+* Real storage size. That is the size of the tenant directory on the pageservers disk. Per-tenant.
 
-* S3 storage size. That is the size of the tenant on S3. Per-tenant.
+* S3 storage size. That is the size of the tenant data on S3. Per-tenant.
 
 That info should be enough to build an internal model that predicts AWS price (hence tracking `written data` and `real storage size`). As for the billing model we probably can get away with mentioning only `CPU time`, `synthetic storage size`, and `traffic` consumption.
 
@@ -153,9 +156,11 @@ The console algorithm upon receive of events could be the following:
 
 Since all the data comes in batches, we can do the batch update to reduce the number of queries in the database. Proxy traffic is probably the most frequent metric, so with batching, we will have extra `number_of_proxies` requests to the database each minute. This is most likely fine for now but will generate many dead tuples in the console database. If that is the case, we can change step 2 to the following:
 
-2.1 Check if there $tenant_$metric / $endpoint_$metric key in Redis
-2.2 If no stored value is found and the metric is incremental, then fetch the current value from DWH (which keeps aggregated value for all the events) and publish it.
-2.3 Publish a new value (absolute metric) or add an increment to the stored value (incremental metric)
+2.1. Check if there $tenant_$metric / $endpoint_$metric key in Redis
+
+2.2. If no stored value is found and the metric is incremental, then fetch the current value from DWH (which keeps aggregated value for all the events) and publish it.
+
+2.3. Publish a new value (absolute metric) or add an increment to the stored value (incremental metric)
 
 ## Consumption watchdog
 
