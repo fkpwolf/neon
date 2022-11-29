@@ -498,6 +498,19 @@ impl RemoteTimelineClient {
         self.metrics.remote_physical_size_gauge().set(size);
     }
 
+
+    pub fn latest_files_total_size(&self) -> Result<u64, anyhow::Error> {
+        let mut guard = self.upload_queue.lock().unwrap();
+        let upload_queue = guard.initialized_mut()?;
+
+        let size = upload_queue
+            .latest_files
+            .iter()
+            .fold(0, |acc, (_, v)| acc + v.file_size().unwrap_or(0));
+
+        Ok(size)
+    }
+
     //
     // Download operations.
     //

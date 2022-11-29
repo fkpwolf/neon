@@ -55,6 +55,9 @@ pub mod defaults {
     pub const DEFAULT_CONCURRENT_TENANT_SIZE_LOGICAL_SIZE_QUERIES: usize =
         super::ConfigurableSemaphore::DEFAULT_INITIAL.get();
 
+    pub const DEFAULT_METRIC_COLLECTION_INTERVAL: &str = "60 s";
+    pub const DEFAULT_METRIC_COLLECTION_ENDPOINT: &str =
+        "http://localhost:9091/billing/api/v1/usage_events";
     ///
     /// Default built-in configuration file.
     ///
@@ -77,6 +80,9 @@ pub mod defaults {
 #log_format = '{DEFAULT_LOG_FORMAT}'
 
 #concurrent_tenant_size_logical_size_queries = '{DEFAULT_CONCURRENT_TENANT_SIZE_LOGICAL_SIZE_QUERIES}'
+
+#metric_collection_interval = '{DEFAULT_METRIC_COLLECTION_INTERVAL}'
+#metric_collection_endpoint = '{DEFAULT_METRIC_COLLECTION_ENDPOINT}'
 
 # [tenant_config]
 #checkpoint_distance = {DEFAULT_CHECKPOINT_DISTANCE} # in bytes
@@ -142,6 +148,10 @@ pub struct PageServerConf {
 
     /// Number of concurrent [`Tenant::gather_size_inputs`] allowed.
     pub concurrent_tenant_size_logical_size_queries: ConfigurableSemaphore,
+
+    // How often to collect metrics and send them to the metrics endpoint.
+    pub metric_collection_interval: Duration,
+    pub metric_collection_endpoint: String,
 }
 
 /// We do not want to store this in a PageServerConf because the latter may be logged
@@ -219,6 +229,9 @@ struct PageServerConfigBuilder {
     log_format: BuilderValue<LogFormat>,
 
     concurrent_tenant_size_logical_size_queries: BuilderValue<ConfigurableSemaphore>,
+
+    metric_collection_interval: BuilderValue<Duration>,
+    metric_collection_endpoint: BuilderValue<String>,
 }
 
 impl Default for PageServerConfigBuilder {
@@ -250,6 +263,11 @@ impl Default for PageServerConfigBuilder {
             log_format: Set(LogFormat::from_str(DEFAULT_LOG_FORMAT).unwrap()),
 
             concurrent_tenant_size_logical_size_queries: Set(ConfigurableSemaphore::default()),
+            metric_collection_interval: Set(humantime::parse_duration(
+                DEFAULT_METRIC_COLLECTION_INTERVAL,
+            )
+            .expect("cannot parse default metric collection interval")),
+            metric_collection_endpoint: Set(DEFAULT_METRIC_COLLECTION_ENDPOINT.to_string()),
         }
     }
 }
@@ -326,6 +344,14 @@ impl PageServerConfigBuilder {
         self.concurrent_tenant_size_logical_size_queries = BuilderValue::Set(u);
     }
 
+    pub fn metric_collection_interval(&mut self, metric_collection_interval: Duration) {
+        self.metric_collection_interval = BuilderValue::Set(metric_collection_interval)
+    }
+
+    pub fn metric_collection_endpoint(&mut self, metric_collection_endpoint: String) {
+        self.metric_collection_endpoint = BuilderValue::Set(metric_collection_endpoint)
+    }
+
     pub fn build(self) -> anyhow::Result<PageServerConf> {
         Ok(PageServerConf {
             listen_pg_addr: self
@@ -371,6 +397,12 @@ impl PageServerConfigBuilder {
                 .ok_or(anyhow!(
                     "missing concurrent_tenant_size_logical_size_queries"
                 ))?,
+            metric_collection_interval: self
+                .metric_collection_interval
+                .ok_or(anyhow!("missing metric_collection_interval"))?,
+            metric_collection_endpoint: self
+                .metric_collection_endpoint
+                .ok_or(anyhow!("missing metric_collection_endpoint"))?,
         })
     }
 }
@@ -541,6 +573,8 @@ impl PageServerConf {
                     let permits = NonZeroUsize::new(permits).context("initial semaphore permits out of range: 0, use other configuration to disable a feature")?;
                     ConfigurableSemaphore::new(permits)
                 }),
+                "metric_collection_interval" => builder.metric_collection_interval(parse_toml_duration(key, item)?),
+                "metric_collection_endpoint" => builder.metric_collection_endpoint(parse_toml_string(key, item)?),
                 _ => bail!("unrecognized pageserver option '{key}'"),
             }
         }
@@ -661,6 +695,8 @@ impl PageServerConf {
             broker_endpoint: storage_broker::DEFAULT_ENDPOINT.parse().unwrap(),
             log_format: LogFormat::from_str(defaults::DEFAULT_LOG_FORMAT).unwrap(),
             concurrent_tenant_size_logical_size_queries: ConfigurableSemaphore::default(),
+            metric_collection_interval: Duration::from_secs(60),
+            metric_collection_endpoint: defaults::DEFAULT_METRIC_COLLECTION_ENDPOINT.to_string(),
         }
     }
 }
@@ -791,6 +827,8 @@ max_file_descriptors = 333
 initial_superuser_name = 'zzzz'
 id = 10
 
+metric_collection_interval = '222 s'
+metric_collection_endpoint = 'http://localhost:80/metrics'
 log_format = 'json'
 
 "#;
@@ -831,6 +869,11 @@ log_format = 'json'
                 broker_endpoint: storage_broker::DEFAULT_ENDPOINT.parse().unwrap(),
                 log_format: LogFormat::from_str(defaults::DEFAULT_LOG_FORMAT).unwrap(),
                 concurrent_tenant_size_logical_size_queries: ConfigurableSemaphore::default(),
+                metric_collection_interval: humantime::parse_duration(
+                    defaults::DEFAULT_METRIC_COLLECTION_INTERVAL
+                )?,
+                metric_collection_endpoint: defaults::DEFAULT_METRIC_COLLECTION_ENDPOINT
+                    .to_string(),
             },
             "Correct defaults should be used when no config values are provided"
         );
@@ -874,6 +917,8 @@ log_format = 'json'
                 broker_endpoint: storage_broker::DEFAULT_ENDPOINT.parse().unwrap(),
                 log_format: LogFormat::Json,
                 concurrent_tenant_size_logical_size_queries: ConfigurableSemaphore::default(),
+                metric_collection_interval: Duration::from_secs(222),
+                metric_collection_endpoint: "http://localhost:80/metrics".to_string(),
             },
             "Should be able to parse all basic config values correctly"
         );
