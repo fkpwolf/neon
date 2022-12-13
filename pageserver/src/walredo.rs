@@ -1022,8 +1022,6 @@ mod tests {
 
     #[test]
     fn short_v14_redo() {
-        // prettier than embedding the 8192 bytes here though most of it are zeroes
-        // PRE-MERGE: zstd would cut it to 263 bytes, consider in review?
         let expected = std::fs::read("fixtures/short_v14_redo.page").unwrap();
 
         let h = RedoHarness::new().unwrap();
