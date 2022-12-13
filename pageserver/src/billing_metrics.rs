@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use reqwest::Url;
 
 // BillingMetric struct that defines the format for one metric entry
 // i.e.
@@ -117,8 +119,11 @@ struct EventChunk<'a> {
 }
 
 // Main thread that serves metrics collection
-pub async fn collect_metrics(conf: &crate::config::PageServerConf) -> anyhow::Result<()> {
-    let mut ticker = tokio::time::interval(conf.metric_collection_interval);
+pub async fn collect_metrics(
+    metric_collection_endpoint: &Url,
+    metric_collection_interval: Duration,
+) -> anyhow::Result<()> {
+    let mut ticker = tokio::time::interval(metric_collection_interval);
 
     info!("starting collect_metrics");
 
@@ -133,7 +138,7 @@ pub async fn collect_metrics(conf: &crate::config::PageServerConf) -> anyhow::Re
                 return Ok(());
             },
             _ = ticker.tick() => {
-                collect_metrics_task(&client, &mut cached_metrics, &conf.metric_collection_endpoint).await?;
+                collect_metrics_task(&client, &mut cached_metrics, metric_collection_endpoint).await?;
             }
         }
     }
@@ -145,10 +150,13 @@ pub async fn collect_metrics(conf: &crate::config::PageServerConf) -> anyhow::Re
 pub async fn collect_metrics_task(
     client: &reqwest::Client,
     cached_metrics: &mut HashMap<BillingMetricsKey, u64>,
-    metric_collection_endpoint: &str,
+    metric_collection_endpoint: &reqwest::Url,
 ) -> anyhow::Result<()> {
     let mut current_metrics: Vec<(BillingMetricsKey, u64)> = Vec::new();
-    trace!("starting collect_metrics_task");
+    trace!(
+        "starting collect_metrics_task. metric_collection_endpoint: {}",
+        metric_collection_endpoint
+    );
 
     // get list of tenants
     let tenants = tenant_mgr::list_tenants().await;
@@ -247,7 +255,7 @@ pub async fn collect_metrics_task(
         .expect("BillingMetric should not fail serialization");
 
         let res = client
-            .post(metric_collection_endpoint)
+            .post(metric_collection_endpoint.clone())
             .json(&chunk_json)
             .send()
             .await;

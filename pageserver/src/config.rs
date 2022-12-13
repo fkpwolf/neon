@@ -12,6 +12,7 @@ use utils::crashsafe::path_with_suffix_extension;
 use utils::id::ConnectionId;
 
 use once_cell::sync::OnceCell;
+use reqwest::Url;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -56,8 +57,7 @@ pub mod defaults {
         super::ConfigurableSemaphore::DEFAULT_INITIAL.get();
 
     pub const DEFAULT_METRIC_COLLECTION_INTERVAL: &str = "60 s";
-    pub const DEFAULT_METRIC_COLLECTION_ENDPOINT: &str =
-        "http://localhost:9091/billing/api/v1/usage_events";
+    pub const DEFAULT_METRIC_COLLECTION_ENDPOINT: Option<reqwest::Url> = None;
     ///
     /// Default built-in configuration file.
     ///
@@ -82,7 +82,6 @@ pub mod defaults {
 #concurrent_tenant_size_logical_size_queries = '{DEFAULT_CONCURRENT_TENANT_SIZE_LOGICAL_SIZE_QUERIES}'
 
 #metric_collection_interval = '{DEFAULT_METRIC_COLLECTION_INTERVAL}'
-#metric_collection_endpoint = '{DEFAULT_METRIC_COLLECTION_ENDPOINT}'
 
 # [tenant_config]
 #checkpoint_distance = {DEFAULT_CHECKPOINT_DISTANCE} # in bytes
@@ -151,7 +150,7 @@ pub struct PageServerConf {
 
     // How often to collect metrics and send them to the metrics endpoint.
     pub metric_collection_interval: Duration,
-    pub metric_collection_endpoint: String,
+    pub metric_collection_endpoint: Option<Url>,
 }
 
 /// We do not want to store this in a PageServerConf because the latter may be logged
@@ -231,7 +230,7 @@ struct PageServerConfigBuilder {
     concurrent_tenant_size_logical_size_queries: BuilderValue<ConfigurableSemaphore>,
 
     metric_collection_interval: BuilderValue<Duration>,
-    metric_collection_endpoint: BuilderValue<String>,
+    metric_collection_endpoint: BuilderValue<Option<Url>>,
 }
 
 impl Default for PageServerConfigBuilder {
@@ -267,7 +266,7 @@ impl Default for PageServerConfigBuilder {
                 DEFAULT_METRIC_COLLECTION_INTERVAL,
             )
             .expect("cannot parse default metric collection interval")),
-            metric_collection_endpoint: Set(DEFAULT_METRIC_COLLECTION_ENDPOINT.to_string()),
+            metric_collection_endpoint: Set(DEFAULT_METRIC_COLLECTION_ENDPOINT),
         }
     }
 }
@@ -348,7 +347,7 @@ impl PageServerConfigBuilder {
         self.metric_collection_interval = BuilderValue::Set(metric_collection_interval)
     }
 
-    pub fn metric_collection_endpoint(&mut self, metric_collection_endpoint: String) {
+    pub fn metric_collection_endpoint(&mut self, metric_collection_endpoint: Option<Url>) {
         self.metric_collection_endpoint = BuilderValue::Set(metric_collection_endpoint)
     }
 
@@ -574,7 +573,11 @@ impl PageServerConf {
                     ConfigurableSemaphore::new(permits)
                 }),
                 "metric_collection_interval" => builder.metric_collection_interval(parse_toml_duration(key, item)?),
-                "metric_collection_endpoint" => builder.metric_collection_endpoint(parse_toml_string(key, item)?),
+                "metric_collection_endpoint" => {
+                    let endpoint = parse_toml_string(key, item)?.parse().context("failed to parse metric_collection_endpoint")?;
+                    builder.metric_collection_endpoint(Some(endpoint));
+                },
+
                 _ => bail!("unrecognized pageserver option '{key}'"),
             }
         }
@@ -696,7 +699,7 @@ impl PageServerConf {
             log_format: LogFormat::from_str(defaults::DEFAULT_LOG_FORMAT).unwrap(),
             concurrent_tenant_size_logical_size_queries: ConfigurableSemaphore::default(),
             metric_collection_interval: Duration::from_secs(60),
-            metric_collection_endpoint: defaults::DEFAULT_METRIC_COLLECTION_ENDPOINT.to_string(),
+            metric_collection_endpoint: defaults::DEFAULT_METRIC_COLLECTION_ENDPOINT,
         }
     }
 }
@@ -872,8 +875,7 @@ log_format = 'json'
                 metric_collection_interval: humantime::parse_duration(
                     defaults::DEFAULT_METRIC_COLLECTION_INTERVAL
                 )?,
-                metric_collection_endpoint: defaults::DEFAULT_METRIC_COLLECTION_ENDPOINT
-                    .to_string(),
+                metric_collection_endpoint: defaults::DEFAULT_METRIC_COLLECTION_ENDPOINT,
             },
             "Correct defaults should be used when no config values are provided"
         );
@@ -918,7 +920,7 @@ log_format = 'json'
                 log_format: LogFormat::Json,
                 concurrent_tenant_size_logical_size_queries: ConfigurableSemaphore::default(),
                 metric_collection_interval: Duration::from_secs(222),
-                metric_collection_endpoint: "http://localhost:80/metrics".to_string(),
+                metric_collection_endpoint: Some(Url::parse("http://localhost:80/metrics")?),
             },
             "Should be able to parse all basic config values correctly"
         );
