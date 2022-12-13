@@ -1,14 +1,15 @@
 import pytest
 from fixtures.log_helper import log
-from fixtures.neon_fixtures import NeonEnvBuilder
+from fixtures.neon_fixtures import NeonEnvBuilder, PortDistributor
 from pytest_httpserver import HTTPServer
 from werkzeug.wrappers.request import Request
 from werkzeug.wrappers.response import Response
 
 
 @pytest.fixture(scope="session")
-def httpserver_listen_address():
-    return ("localhost", 9091)
+def httpserver_listen_address(port_distributor: PortDistributor):
+    port = port_distributor.get_port()
+    return ("localhost", port)
 
 
 #
@@ -35,7 +36,14 @@ def metrics_handler(request: Request) -> Response:
     return Response(status=200)
 
 
-def test_metric_collection(httpserver: HTTPServer, neon_env_builder: NeonEnvBuilder):
+def test_metric_collection(
+    httpserver: HTTPServer, neon_env_builder: NeonEnvBuilder, httpserver_listen_address
+):
+
+    (host, port) = httpserver_listen_address
+    neon_env_builder.pageserver_config_override = f"""
+    metric_collection_endpoint="http://{host}:{port}/billing/api/v1/usage_events"
+    """
 
     # mock http server that returns OK for the metrics
     httpserver.expect_request("/billing/api/v1/usage_events", method="POST").respond_with_handler(
