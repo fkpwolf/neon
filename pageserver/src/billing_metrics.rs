@@ -2,10 +2,7 @@
 // Billing metrics
 // ======================================================================
 
-use std::sync::Arc;
-
 use anyhow;
-use tokio::sync::Mutex;
 use tracing::*;
 use utils::id::TimelineId;
 
@@ -127,8 +124,7 @@ pub async fn collect_metrics(conf: &crate::config::PageServerConf) -> anyhow::Re
 
     // define client here to reuse it for all requests
     let client = reqwest::Client::new();
-    let cached_metrics: Arc<Mutex<HashMap<BillingMetricsKey, u64>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let mut cached_metrics: HashMap<BillingMetricsKey, u64> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -137,8 +133,7 @@ pub async fn collect_metrics(conf: &crate::config::PageServerConf) -> anyhow::Re
                 return Ok(());
             },
             _ = ticker.tick() => {
-                let cached_metrics = cached_metrics.clone();
-                collect_metrics_task(&client, &cached_metrics, &conf.metric_collection_endpoint).await?;
+                collect_metrics_task(&client, &mut cached_metrics, &conf.metric_collection_endpoint).await?;
             }
         }
     }
@@ -149,7 +144,7 @@ pub async fn collect_metrics(conf: &crate::config::PageServerConf) -> anyhow::Re
 // cache them to avoid sending the same metrics multiple times.
 pub async fn collect_metrics_task(
     client: &reqwest::Client,
-    cached_metrics: &Arc<Mutex<HashMap<BillingMetricsKey, u64>>>,
+    cached_metrics: &mut HashMap<BillingMetricsKey, u64>,
     metric_collection_endpoint: &str,
 ) -> anyhow::Result<()> {
     let mut current_metrics: Vec<(BillingMetricsKey, u64)> = Vec::new();
@@ -217,37 +212,12 @@ pub async fn collect_metrics_task(
     }
 
     // Filter metrics
-    let mut cached_metrics_guard = cached_metrics.lock().await;
-    let mut filtered_metrics = Vec::new();
+    current_metrics.retain(|(curr_key, curr_val)| match cached_metrics.get(curr_key) {
+        Some(val) => val != curr_val,
+        None => true,
+    });
 
-    for (curr_key, curr_val) in current_metrics.iter() {
-        if let Some(val) = cached_metrics_guard.insert(curr_key.clone(), *curr_val) {
-            if val != *curr_val {
-                // metric was updated, send it
-                filtered_metrics.push({
-                    BillingMetric::new_absolute(
-                        curr_key.metric,
-                        curr_key.tenant_id,
-                        curr_key.timeline_id,
-                        *curr_val,
-                    )
-                });
-            }
-        } else {
-            // cache the metric
-            cached_metrics_guard.insert(curr_key.clone(), *curr_val);
-            filtered_metrics.push({
-                BillingMetric::new_absolute(
-                    curr_key.metric,
-                    curr_key.tenant_id,
-                    curr_key.timeline_id,
-                    *curr_val,
-                )
-            });
-        }
-    }
-
-    if filtered_metrics.is_empty() {
+    if current_metrics.is_empty() {
         trace!("no new metrics to send");
         return Ok(());
     }
@@ -255,11 +225,26 @@ pub async fn collect_metrics_task(
     // Send metrics to billing service.
     // split into chunks of 1000 metrics to avoid exceeding the max request size
     const CHUNK_SIZE: usize = 1000;
-    let chunks = filtered_metrics.chunks(CHUNK_SIZE);
+    let chunks = current_metrics.chunks(CHUNK_SIZE);
 
     for chunk in chunks {
-        let chunk_json = serde_json::value::to_raw_value(&EventChunk { events: chunk })
-            .expect("BillingMetric should not fail serialization");
+        // enrich metrics with timestamp and metric_kind before sending
+        let chunk_to_send: Vec<BillingMetric> = chunk
+            .iter()
+            .map(|(curr_key, curr_val)| {
+                BillingMetric::new_absolute(
+                    curr_key.metric,
+                    curr_key.tenant_id,
+                    curr_key.timeline_id,
+                    *curr_val,
+                )
+            })
+            .collect();
+
+        let chunk_json = serde_json::value::to_raw_value(&EventChunk {
+            events: &chunk_to_send,
+        })
+        .expect("BillingMetric should not fail serialization");
 
         let res = client
             .post(metric_collection_endpoint)
@@ -270,9 +255,12 @@ pub async fn collect_metrics_task(
         match res {
             Ok(res) => {
                 if res.status().is_success() {
-                    debug!("metrics sent successfully, response: {:?}", res);
+                    // update cached metrics after they were sent successfully
+                    for (curr_key, curr_val) in chunk.iter() {
+                        cached_metrics.insert(curr_key.clone(), *curr_val);
+                    }
                 } else {
-                    error!("failed to send metrics: {:?}", res);
+                    error!("metrics endpoint refused the sent metrics: {:?}", res);
                 }
             }
             Err(err) => {
