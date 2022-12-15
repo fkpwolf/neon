@@ -1321,6 +1321,20 @@ impl Timeline {
             "Calculating logical size for timeline {} at {}",
             self.timeline_id, up_to_lsn
         );
+        // gotta use two failpoints because changing failpoint action because threads
+        // that are already in the failpoint don't re-evaluate the new action
+        fail::fail_point!("timeline-calculate-physical-size-pause");
+        fail::fail_point!("timeline-calculate-physical-size-check-dir-exists", |_| {
+            if !self
+                .conf
+                .metadata_path(self.timeline_id, self.tenant_id)
+                .exists()
+            {
+                error!("timeline-calculate-physical-size-pre metadata file does not exist")
+            }
+            // need to return something
+            Ok(0)
+        });
         let timer = if up_to_lsn == self.initdb_lsn {
             if let Some(size) = self.current_logical_size.initialized_size() {
                 if size != 0 {
