@@ -19,6 +19,7 @@ use postgres_ffi::{Oid, TimestampTz, TransactionId};
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map, HashMap, HashSet};
 use std::ops::Range;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 use utils::{bin_ser::BeSer, lsn::Lsn};
 
@@ -376,7 +377,11 @@ impl Timeline {
     ///
     /// Only relation blocks are counted currently. That excludes metadata,
     /// SLRUs, twophase files etc.
-    pub fn get_current_logical_size_non_incremental(&self, lsn: Lsn) -> Result<u64> {
+    pub fn get_current_logical_size_non_incremental(
+        &self,
+        lsn: Lsn,
+        cancel: CancellationToken,
+    ) -> Result<u64> {
         // Fetch list of database dirs and iterate them
         let buf = self.get(DBDIR_KEY, lsn)?;
         let dbdir = DbDirectory::des(&buf)?;
@@ -384,6 +389,9 @@ impl Timeline {
         let mut total_size: u64 = 0;
         for (spcnode, dbnode) in dbdir.dbdirs.keys() {
             for rel in self.list_rels(*spcnode, *dbnode, lsn)? {
+                if cancel.is_cancelled() {
+                    anyhow::bail!("cancelled");
+                }
                 let relsize_key = rel_size_to_key(rel);
                 let mut buf = self.get(relsize_key, lsn)?;
                 let relsize = buf.get_u32_le();

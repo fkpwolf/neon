@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use hyper::StatusCode;
 use hyper::{Body, Request, Response, Uri};
 use remote_storage::GenericRemoteStorage;
+use tokio_util::sync::CancellationToken;
 use tracing::*;
 
 use super::models::{
@@ -87,7 +88,10 @@ fn build_timeline_info(
     let mut info = build_timeline_info_common(timeline)?;
     if include_non_incremental_logical_size {
         info.current_logical_size_non_incremental =
-            Some(timeline.get_current_logical_size_non_incremental(info.last_record_lsn)?);
+            Some(timeline.get_current_logical_size_non_incremental(
+                info.last_record_lsn,
+                CancellationToken::new(),
+            )?);
     }
     if include_non_incremental_physical_size {
         info.current_physical_size_non_incremental =
