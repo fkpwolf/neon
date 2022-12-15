@@ -208,6 +208,9 @@ pub enum TaskKind {
 
     // task that handhes metrics collection
     MetricsCollection,
+
+    // Task that calculates synthetis size for all active tenants
+    CalculateSyntheticSize,
 }
 
 #[derive(Default)]

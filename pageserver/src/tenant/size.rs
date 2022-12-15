@@ -364,6 +364,10 @@ async fn calculate_logical_size(
         .await
         .expect("global semaphore should not had been closed");
 
+    info!(
+        "XXXXXXXXX calculate_logical_size timeline {} acquired a permit",
+        timeline.timeline_id
+    );
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let size_res = timeline.calculate_logical_size(lsn);
